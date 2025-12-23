@@ -5,7 +5,7 @@ pub mod data;
 use burn_ndarray::NdArray; 
 use burn::{
     module::Module,
-    record::{BinBytesRecorder, FullPrecisionSettings, Recorder},
+    record::{BinBytesRecorder, HalfPrecisionSettings, Recorder},
     tensor::Tensor,
 };
 use image::ImageReader;
@@ -36,7 +36,7 @@ impl CaptchaSolver {
         let device = Default::default();
         let model = Model::new(&device);
 
-        let record = BinBytesRecorder::<FullPrecisionSettings>::default()
+        let record = BinBytesRecorder::<HalfPrecisionSettings>::default()
             .load(MODEL_BYTES.to_vec(), &device)
             .expect("Failed to load embedded model");
 

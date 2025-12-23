@@ -2,7 +2,7 @@ use booktoki_captcha::{model::Model, data::CaptchaDataset};
 use burn::{
     prelude::*,
     optim::{AdamWConfig, Optimizer},
-    record::{BinBytesRecorder, FullPrecisionSettings, Recorder},
+    record::{BinBytesRecorder, HalfPrecisionSettings, Recorder},
     tensor::backend::AutodiffBackend, 
     backend::Autodiff,
     module::{Module, AutodiffModule},
@@ -120,7 +120,7 @@ fn main() {
                 println!("🔥 New Best Model! Acc: {:.2}% - Saving...", best_acc);
                 
                 let record = model.clone().into_record();
-                let bytes = BinBytesRecorder::<FullPrecisionSettings>::default()
+                let bytes = BinBytesRecorder::<HalfPrecisionSettings>::default()
                     .record(record, ())
                     .expect("Failed to serialize model");
                     
