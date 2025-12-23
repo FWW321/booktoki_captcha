@@ -4,62 +4,70 @@ use burn::{
     prelude::*,
 };
 use image::ImageReader;
-use rand::seq::SliceRandom;
-use rand::rng;
+use rand::{rng, seq::SliceRandom, Rng};
+use std::path::Path;
 
+/// Represents a single processed captcha item.
 #[derive(Clone, Debug)]
 pub struct CaptchaItem {
-    // 预处理好的像素数据 (60x160 = 9600 floats)
+    /// Flattened pixel data (normalized to -1.0..1.0).
     pub pixels: Vec<f32>,
+    /// The 4-digit label.
     pub label: [i64; 4],
 }
 
+/// A dataset of captcha images.
 #[derive(Clone)]
 pub struct CaptchaDataset {
     items: Vec<CaptchaItem>,
 }
 
 impl CaptchaDataset {
-    pub fn new(root: &str) -> Self {
+    /// Loads the dataset from a directory.
+    pub fn new<P: AsRef<Path>>(root: P) -> Self {
         let mut items = Vec::new();
         if let Ok(entries) = std::fs::read_dir(root) {
             let entries: Vec<_> = entries.flatten().collect();
-            println!("Preprocessing {} images...", entries.len());
             
             for entry in entries {
                 let path = entry.path();
                 if path.extension().map_or(false, |e| e == "png" || e == "jpg") {
-                    let stem = path.file_stem().unwrap().to_str().unwrap();
-                    if stem.len() == 4 && stem.chars().all(char::is_numeric) {
-                        let mut label = [0; 4];
-                        for (i, c) in stem.chars().enumerate() {
-                            label[i] = c.to_digit(10).unwrap() as i64;
-                        }
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if stem.len() == 4 && stem.chars().all(char::is_numeric) {
+                            let mut label = [0; 4];
+                            for (i, c) in stem.chars().enumerate() {
+                                label[i] = c.to_digit(10).unwrap() as i64;
+                            }
 
-                        // 核心优化：只在加载数据集时解码一次
-                        let img = ImageReader::open(&path).unwrap().decode().unwrap();
-                        // 优化1：使用 Triangle (双线性) 插值，比 Nearest 更平滑，保留更多特征
-                        let gray = img.resize_exact(IMG_WIDTH as u32, IMG_HEIGHT as u32, image::imageops::FilterType::Triangle).to_luma8();
-                        
-                        let mut pixels = Vec::with_capacity(IMG_WIDTH * IMG_HEIGHT);
-                        for pixel in gray.pixels() {
-                            // 优化2：归一化到 [-1.0, 1.0] 范围
-                            // (x / 255.0 - 0.5) / 0.5
-                            let val = pixel.0[0] as f32 / 255.0;
-                            pixels.push((val - 0.5) / 0.5);
-                        }
+                            if let Ok(reader) = ImageReader::open(&path) {
+                                if let Ok(img) = reader.decode() {
+                                    // Resize using Triangle filter for better feature retention
+                                    let gray = img.resize_exact(
+                                        IMG_WIDTH as u32, 
+                                        IMG_HEIGHT as u32, 
+                                        image::imageops::FilterType::Triangle
+                                    ).to_luma8();
+                                    
+                                    let mut pixels = Vec::with_capacity(IMG_WIDTH * IMG_HEIGHT);
+                                    for pixel in gray.pixels() {
+                                        // Normalize: [0, 255] -> [-1.0, 1.0]
+                                        let val = pixel.0[0] as f32 / 255.0;
+                                        pixels.push((val - 0.5) / 0.5);
+                                    }
 
-                        items.push(CaptchaItem { pixels, label });
+                                    items.push(CaptchaItem { pixels, label });
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        println!("Successfully loaded {} images into RAM", items.len());
+        println!("Loaded {} images.", items.len());
         Self { items }
     }
 
-    /// Splits the dataset into two datasets (train, valid) based on the ratio.
-    /// Ratio is for the first dataset (e.g., 0.8 for 80% train).
+    /// Splits the dataset into training and validation sets.
     pub fn split(mut self, ratio: f32) -> (Self, Self) {
         let mut rng = rng();
         self.items.shuffle(&mut rng);
@@ -67,18 +75,15 @@ impl CaptchaDataset {
         let split_idx = (self.items.len() as f32 * ratio) as usize;
         let valid_items = self.items.split_off(split_idx);
         
-        println!("Split dataset: {} training, {} validation", self.items.len(), valid_items.len());
-        
         (self, Self { items: valid_items })
     }
 
-    /// 离线数据增强：将数据集扩充 N 倍
-    /// 包含：随机噪声、Cutout
+    /// Offline data augmentation.
+    /// Expands the dataset by `factor` times using noise, cutout, translation, and shear.
     pub fn augment(&mut self, factor: usize) {
-        println!("🔨 Augmenting dataset {}x ...", factor);
+        println!("Augmenting dataset {}x...", factor);
         let original_items = self.items.clone();
         let mut rng = rng();
-        use rand::Rng;
 
         for _ in 0..factor {
             for item in &original_items {
@@ -86,15 +91,15 @@ impl CaptchaDataset {
                 
                 // 1. Random Noise
                 for p in new_pixels.iter_mut() {
-                    if rng.random_bool(0.15) { // 稍微增加概率
-                         *p += rng.random_range(-0.15..0.15); // 稍微增加强度
+                    if rng.random_bool(0.15) {
+                         *p += rng.random_range(-0.15..0.15);
                          *p = p.clamp(-1.0, 1.0);
                     }
                 }
 
-                // 2. Random Cutout (Occlusion)
-                if rng.random_bool(0.4) { // 增加遮挡概率
-                    let cut_h = rng.random_range(8..20); // 更大的遮挡
+                // 2. Random Cutout
+                if rng.random_bool(0.4) {
+                    let cut_h = rng.random_range(8..20);
                     let cut_w = rng.random_range(8..20);
                     let start_y = rng.random_range(0..(IMG_HEIGHT - cut_h));
                     let start_x = rng.random_range(0..(IMG_WIDTH - cut_w));
@@ -106,7 +111,7 @@ impl CaptchaDataset {
                     }
                 }
 
-                // 3. Random Translation (Shift) - 更激进的平移
+                // 3. Random Translation
                 if rng.random_bool(0.6) {
                     let shift_x = rng.random_range(-15..15); 
                     let shift_y = rng.random_range(-8..8);   
@@ -125,10 +130,9 @@ impl CaptchaDataset {
                     new_pixels = shifted_pixels;
                 }
 
-                // 4. Random Shear (Slant) - 模拟斜体/倾斜
-                // x' = x + alpha * y
+                // 4. Random Shear
                 if rng.random_bool(0.5) {
-                    let shear_factor = rng.random_range(-0.2..0.2); // 倾斜程度
+                    let shear_factor = rng.random_range(-0.2..0.2);
                     let mut sheared_pixels = vec![-1.0; new_pixels.len()];
 
                     for y in 0..IMG_HEIGHT {
@@ -150,15 +154,13 @@ impl CaptchaDataset {
             }
         }
         
-        // Shuffle again
         self.items.shuffle(&mut rng);
-        println!("✨ Dataset expanded to {} images", self.items.len());
+        println!("Dataset size after augmentation: {}", self.items.len());
     }
 
-    /// 将所有数据一次性上传到 GPU，返回 (Images, Targets)
+    /// Uploads the entire dataset to GPU memory as a single batch.
     pub fn to_gpu_tensors<B: Backend>(self, device: &B::Device) -> (Tensor<B, 4>, Tensor<B, 2, Int>) {
         let batch_size = self.items.len();
-        println!("🚀 Uploading {} images to GPU...", batch_size);
         
         let mut all_pixels = Vec::with_capacity(batch_size * IMG_HEIGHT * IMG_WIDTH);
         let mut all_labels = Vec::with_capacity(batch_size * 4);
@@ -173,8 +175,6 @@ impl CaptchaDataset {
 
         let targets = Tensor::<B, 1, Int>::from_ints(all_labels.as_slice(), device)
             .reshape([batch_size, 4]);
-            
-        println!("✅ Upload complete!");
 
         (images, targets)
     }
@@ -213,7 +213,6 @@ impl<B: Backend> Batcher<B, CaptchaItem, CaptchaBatch<B>> for CaptchaBatcher<B> 
         let mut all_labels = Vec::with_capacity(batch_size * 4);
 
         for item in items {
-            // 这里现在只是简单的内存拷贝，极快
             all_pixels.extend_from_slice(&item.pixels);
             all_labels.extend_from_slice(&item.label);
         }

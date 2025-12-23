@@ -1,7 +1,6 @@
 pub mod model;
 pub mod data; 
 
-// 引入 NdArray (注意大写 A)
 use burn_ndarray::NdArray; 
 use burn::{
     module::Module,
@@ -12,30 +11,28 @@ use image::ImageReader;
 use std::io::Cursor;
 use model::{Model, IMG_HEIGHT, IMG_WIDTH};
 
+// Use NdArray backend for CPU inference
 type Backend = NdArray;
 
+/// A thread-safe captcha solver using a pre-trained ResNet model.
 pub struct CaptchaSolver {
     model: Model<Backend>,
     device: <Backend as burn::tensor::backend::Backend>::Device,
 }
 
-// =========================================================
-// ⚠️ 第一次编译训练时请保持注释！
-// 训练生成 model/captcha_model.bin 后，再取消下面这行的注释
+// Embed the trained model binary (FP16 format)
 static MODEL_BYTES: &[u8] = include_bytes!("../model/captcha_model.bin");
-// =========================================================
 
 impl CaptchaSolver {
-    // 临时 new 方法 (用于通过编译进行训练)
-    // pub fn new() -> Self {
-    //    panic!("请先运行训练脚本生成模型文件，然后修改 src/lib.rs 取消 MODEL_BYTES 的注释！");
-    // }
-
-    // 🟢 训练完成后，取消 static MODEL_BYTES 的注释，并启用这个 new 方法
+    /// Initializes a new solver instance.
+    /// Loads the embedded model into memory.
     pub fn new() -> Self {
         let device = Default::default();
+        
+        // Initialize model structure
         let model = Model::new(&device);
 
+        // Load weights from embedded binary using HalfPrecisionSettings
         let record = BinBytesRecorder::<HalfPrecisionSettings>::default()
             .load(MODEL_BYTES.to_vec(), &device)
             .expect("Failed to load embedded model");
@@ -45,36 +42,40 @@ impl CaptchaSolver {
         Self { model, device }
     }
     
-
+    /// Solves a captcha from image bytes (JPEG/PNG).
+    /// Returns the 4-digit string.
     pub fn solve(&self, image_bytes: &[u8]) -> Result<String, String> {
+        // Decode image
         let img = ImageReader::new(Cursor::new(image_bytes))
             .with_guessed_format()
             .map_err(|e| e.to_string())?
             .decode()
             .map_err(|e| e.to_string())?;
 
-        // 优化1：保持与训练时一致的插值算法 (Triangle)
-        let gray = img.resize_exact(IMG_WIDTH as u32, IMG_HEIGHT as u32, image::imageops::FilterType::Triangle)
-            .to_luma8();
+        // Preprocessing: Resize using Triangle filter (matches training)
+        let gray = img.resize_exact(
+            IMG_WIDTH as u32, 
+            IMG_HEIGHT as u32, 
+            image::imageops::FilterType::Triangle
+        ).to_luma8();
 
+        // Normalize pixels to [-1.0, 1.0]
         let mut pixel_data = Vec::with_capacity(IMG_WIDTH * IMG_HEIGHT);
         for pixel in gray.pixels() {
-            // 优化2：保持与训练时一致的归一化 [-1.0, 1.0]
             let val = pixel.0[0] as f32 / 255.0;
             pixel_data.push((val - 0.5) / 0.5);
         }
 
+        // Create tensor [1, 1, H, W]
         let input_tensor = Tensor::<Backend, 1>::from_floats(pixel_data.as_slice(), &self.device)
             .reshape([1, 1, IMG_HEIGHT, IMG_WIDTH]);
 
-        // 推理
+        // Inference
         let output = self.model.forward(input_tensor); // [1, 4, 10]
         
-        // 【修复点 1】：squeeze::<1>() 不再需要参数 (0)
-        // argmax(2) 得到 [1, 4, 1]，squeeze::<1>() 自动压缩为 [4]
+        // Post-processing
         let predicted = output.argmax(2).squeeze::<1>(); 
         
-        // 【修复点 2】：TensorData 没有 .value 字段了，使用 .to_vec::<i64>()
         let indices: Vec<i64> = predicted
             .into_data()
             .to_vec::<i64>()
@@ -84,6 +85,9 @@ impl CaptchaSolver {
     }
 }
 
+/// Convenience function to solve a captcha in one shot.
+/// Note: Re-initializing the solver every time is inefficient for batch processing.
+/// Use `CaptchaSolver` struct for repeated use.
 pub fn solve_captcha(image_bytes: &[u8]) -> Result<String, String> {
     let solver = CaptchaSolver::new();
     solver.solve(image_bytes)

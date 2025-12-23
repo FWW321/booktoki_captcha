@@ -10,5 +10,5 @@ cargo run --release --bin train --features training
 
 推理
 ```
-cargo run --release --bin predict
+cargo run --release --bin booktoki_captcha
 ```

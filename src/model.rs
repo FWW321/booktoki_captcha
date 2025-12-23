@@ -9,15 +9,17 @@ use burn::{
     prelude::*,
 };
 
+/// Input image height
 pub const IMG_HEIGHT: usize = 60;
+/// Input image width
 pub const IMG_WIDTH: usize = 160;
+
 const NUM_CLASSES: usize = 10;
 const CAPTCHA_LENGTH: usize = 4;
 const POOL_WIDTH: usize = 8; 
 
-// ========================================================================
-// SE Block (保持不变，用于去噪)
-// ========================================================================
+/// Squeeze-and-Excitation Block for channel-wise attention.
+/// Helps the model focus on informative channels and suppress noise.
 #[derive(Module, Debug)]
 pub struct SeBlock<B: Backend> {
     pool: AdaptiveAvgPool2d,
@@ -52,23 +54,21 @@ impl<B: Backend> SeBlock<B> {
     }
 }
 
-// ========================================================================
-// SE-BasicBlock (回归 ResNet 结构，但加入 SE 增强)
-// ========================================================================
+/// ResNet Basic Block with SE Attention.
+/// Standard 3x3 convolutions are used to effectively handle character overlap.
 #[derive(Module, Debug)]
-pub struct SeBasicBlock<B: Backend> {
+pub struct ResBlock<B: Backend> {
     conv1: Conv2d<B>,
     bn1: BatchNorm<B>,
     conv2: Conv2d<B>,
     bn2: BatchNorm<B>,
-    se: SeBlock<B>,       // 新增：注意力模块
+    se: SeBlock<B>,
     activation: Relu,
     downsample: Option<Conv2d<B>>,
 }
 
-impl<B: Backend> SeBasicBlock<B> {
+impl<B: Backend> ResBlock<B> {
     pub fn new(in_channels: usize, out_channels: usize, stride: usize, device: &B::Device) -> Self {
-        // 标准 3x3 卷积，不使用分组卷积，保证特征提取能力
         let conv1 = Conv2dConfig::new([in_channels, out_channels], [3, 3])
             .with_stride([stride, stride])
             .with_padding(PaddingConfig2d::Explicit(1, 1))
@@ -81,8 +81,8 @@ impl<B: Backend> SeBasicBlock<B> {
             .init(device);
         let bn2 = BatchNormConfig::new(out_channels).init(device);
 
-        // SE 模块放在残差相加之前
-        let se = SeBlock::new(out_channels, 8, device); // Reduction=8, 轻量化
+        // Reduction=8 for lightweight attention
+        let se = SeBlock::new(out_channels, 8, device);
 
         let downsample = if stride != 1 || in_channels != out_channels {
             Some(Conv2dConfig::new([in_channels, out_channels], [1, 1])
@@ -108,7 +108,6 @@ impl<B: Backend> SeBasicBlock<B> {
         let x = self.conv2.forward(x);
         let x = self.bn2.forward(x);
         
-        // 关键：在残差相加前通过 SE 模块过滤特征
         let x = self.se.forward(x);
 
         let x = x.add(residual);
@@ -116,25 +115,27 @@ impl<B: Backend> SeBasicBlock<B> {
     }
 }
 
+/// Captcha Solver Model (SE-ResNet Lite).
+/// Optimized for accuracy on sticky characters while maintaining low parameter count.
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
     conv1: Conv2d<B>,
     bn1: BatchNorm<B>,
     relu: Relu,
     
-    // 3 Stages, Max 64 Channels (体积控制)
-    layer1: SeBasicBlock<B>,
-    layer1_2: SeBasicBlock<B>, 
+    // Stage 1
+    layer1: ResBlock<B>,
+    layer1_2: ResBlock<B>, 
 
-    layer2: SeBasicBlock<B>,
-    layer2_2: SeBasicBlock<B>,
+    // Stage 2
+    layer2: ResBlock<B>,
+    layer2_2: ResBlock<B>,
 
-    layer3: SeBasicBlock<B>,
-    layer3_2: SeBasicBlock<B>, 
-    layer3_3: SeBasicBlock<B>, // 多加一层深度，处理复杂扭曲
+    // Stage 3 (Deep but narrow to save parameters)
+    layer3: ResBlock<B>,
+    layer3_2: ResBlock<B>, 
+    layer3_3: ResBlock<B>, 
 
-    // 移除了 layer4 (128 channels)，因为 64 通道配合 SE 通常足够，且能大幅减小体积
-    
     pool: AdaptiveAvgPool2d,
     dropout: Dropout,
     fc: Linear<B>, 
@@ -150,28 +151,25 @@ impl<B: Backend> Model<B> {
         let bn1 = BatchNormConfig::new(32).init(device);
 
         // Stage 1: 32 channels
-        let layer1 = SeBasicBlock::new(32, 32, 1, device);
-        let layer1_2 = SeBasicBlock::new(32, 32, 1, device);
+        let layer1 = ResBlock::new(32, 32, 1, device);
+        let layer1_2 = ResBlock::new(32, 32, 1, device);
 
         // Stage 2: 64 channels
-        let layer2 = SeBasicBlock::new(32, 64, 2, device);
-        let layer2_2 = SeBasicBlock::new(64, 64, 1, device);
+        let layer2 = ResBlock::new(32, 64, 2, device);
+        let layer2_2 = ResBlock::new(64, 64, 1, device);
 
-        // Stage 3: 64 channels (保持 64，不再升到 128)
-        // 我们用更多的层数代替更多的通道，这样参数更少，非线性能力更强
-        let layer3 = SeBasicBlock::new(64, 64, 2, device); 
-        let layer3_2 = SeBasicBlock::new(64, 64, 1, device);
-        let layer3_3 = SeBasicBlock::new(64, 64, 1, device);
+        // Stage 3: 64 channels (Max 64 to keep model size ~1MB)
+        let layer3 = ResBlock::new(64, 64, 2, device); 
+        let layer3_2 = ResBlock::new(64, 64, 1, device);
+        let layer3_3 = ResBlock::new(64, 64, 1, device);
 
-        // Pooling: [B, 64, 1, 8]
-        // 注意：这里通道是 64，比原来的 128 少了一半
+        // Pooling -> [B, 64, 1, 8]
         let pool = AdaptiveAvgPool2dConfig::new([1, POOL_WIDTH]).init();
         
-        // Dropout 回归 0.5，防止过拟合
+        // High dropout to prevent overfitting on small dataset
         let dropout = DropoutConfig::new(0.5).init(); 
         
-        // Linear: 64 * 8 = 512 -> 40
-        // 全连接层参数也减少了一半
+        // FC: 512 -> 40
         let fc = LinearConfig::new(64 * POOL_WIDTH, CAPTCHA_LENGTH * NUM_CLASSES).init(device);
         
         Self {
@@ -200,11 +198,11 @@ impl<B: Backend> Model<B> {
         let x = self.layer3_2.forward(x);
         let x = self.layer3_3.forward(x);
 
-        let x = self.pool.forward(x); // -> [B, 64, 1, 8]
+        let x = self.pool.forward(x); 
         let x = x.reshape([batch_size, 64 * POOL_WIDTH]);
 
         let x = self.dropout.forward(x);
-        let x = self.fc.forward(x); // -> [B, 40]
+        let x = self.fc.forward(x);
 
         x.reshape([batch_size, CAPTCHA_LENGTH, NUM_CLASSES])
     }
