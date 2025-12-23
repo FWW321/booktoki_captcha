@@ -1,0 +1,42 @@
+[package]
+name = "booktoki_captcha"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# 核心框架 (锁定 0.19)
+burn = { version = "0.19", features = ["vision", "train"] }
+# 独立的 ndarray 后端 crate
+burn-ndarray = { version = "0.19", default-features = false, features = ["std"] }
+# LibTorch 后端 (支持 CUDA/CuDNN)
+burn-tch = { version = "0.19", optional = true }
+
+serde = { version = "1.0", features = ["derive"] }
+image = "0.25"
+log = "0.4"
+env_logger = "0.11"
+rand = "0.9"
+
+[features]
+default = []
+training = ["burn-tch"]
+
+[[bin]]
+name = "train"
+path = "src/bin/train.rs"
+required-features = ["training"]
+
+[[bin]]
+name = "fix_data"
+path = "src/bin/fix_data.rs"
+
+[[bin]]
+name = "predict"
+path = "src/bin/predict.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+panic = "abort"
