@@ -78,7 +78,7 @@ cargo run --release --bin train --features training
 **注意**：在发布或构建库之前，请确保 `src/lib.rs` 中的模型加载路径正确，并且对应的二进制文件存在。
 
 ### 4. 运行测试
-使用 `predict` 工具测试模型效果：
+使用 `booktoki_captcha` 工具测试模型效果：
 
 ```powershell
 # 预测单张图片
