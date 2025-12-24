@@ -4,11 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# 核心框架 (锁定 0.19)
 burn = { version = "0.19", features = ["vision", "train"] }
-# 独立的 ndarray 后端 crate
-burn-ndarray = { version = "0.19", default-features = false, features = ["std"] }
-# LibTorch 后端 (支持 CUDA/CuDNN)
+# 推理使用 ndarray 后端
+burn-ndarray = { version = "0.19", default-features = false, features = ["std", "simd"] }
+# 训练使用 tch 后端
 burn-tch = { version = "0.19", optional = true }
 
 serde = { version = "1.0", features = ["derive"] }
