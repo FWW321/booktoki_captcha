@@ -21,7 +21,7 @@ fn main() {
                 if count >= 5 { break; } // Test 5 images
                 if let Ok(entry) = entry {
                     let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "jpg" || e == "png") {
+                    if path.extension().is_some_and(|e| e == "jpg" || e == "png") {
                         predict_one(path.to_str().unwrap_or_default());
                         count += 1;
                     }

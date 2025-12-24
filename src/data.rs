@@ -31,16 +31,16 @@ impl CaptchaDataset {
             
             for entry in entries {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "png" || e == "jpg") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        if stem.len() == 4 && stem.chars().all(char::is_numeric) {
+                if path.extension().is_some_and(|e| e == "png" || e == "jpg")
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                        && stem.len() == 4 && stem.chars().all(char::is_numeric) {
                             let mut label = [0; 4];
                             for (i, c) in stem.chars().enumerate() {
                                 label[i] = c.to_digit(10).unwrap() as i64;
                             }
 
-                            if let Ok(reader) = ImageReader::open(&path) {
-                                if let Ok(img) = reader.decode() {
+                            if let Ok(reader) = ImageReader::open(&path)
+                                && let Ok(img) = reader.decode() {
                                     // Resize using Triangle filter for better feature retention
                                     let gray = img.resize_exact(
                                         IMG_WIDTH as u32, 
@@ -57,10 +57,7 @@ impl CaptchaDataset {
 
                                     items.push(CaptchaItem { pixels, label });
                                 }
-                            }
                         }
-                    }
-                }
             }
         }
         println!("Loaded {} images.", items.len());
