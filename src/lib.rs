@@ -1,4 +1,5 @@
 pub mod model;
+#[cfg(feature = "training")]
 pub mod data; 
 
 use std::sync::{LazyLock, Mutex};

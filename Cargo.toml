@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-burn = { version = "0.19", features = ["vision", "train"] }
+burn = { version = "0.19", features = ["vision"] }
 # 推理使用 ndarray 后端
 burn-ndarray = { version = "0.19", default-features = false, features = ["std", "simd"] }
 # 训练使用 tch 后端
@@ -18,7 +18,7 @@ rand = "0.9"
 
 [features]
 default = []
-training = ["burn-tch"]
+training = ["burn-tch", "burn/train"]
 
 [[bin]]
 name = "train"

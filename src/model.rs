@@ -207,6 +207,7 @@ impl<B: Backend> Model<B> {
         x.reshape([batch_size, CAPTCHA_LENGTH, NUM_CLASSES])
     }
 
+    #[cfg(feature = "training")]
     pub fn forward_classification(
         &self,
         images: Tensor<B, 4>,
