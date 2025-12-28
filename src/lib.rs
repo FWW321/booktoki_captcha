@@ -27,19 +27,14 @@ struct CaptchaSolver {
 static MODEL_BYTES: &[u8] = include_bytes!("../model/captcha_model.bin");
 
 
-// 全岛唯一的 Solver 实例 (Wrapped in Mutex for thread safety)
 static SOLVER: LazyLock<Mutex<CaptchaSolver>> = LazyLock::new(|| Mutex::new(CaptchaSolver::new()));
 
 impl CaptchaSolver {
-    /// 初始化一个新实例。
-    /// 注意：由于使用了单例模式，通常不直接调用此方法，而是使用全局入口。
     fn new() -> Self {
         let device = Default::default();
         
-        // 初始化模型结构
         let model = Model::new(&device);
 
-        // 从嵌入的二进制文件中加载权重
         let record = BinBytesRecorder::<HalfPrecisionSettings>::default()
             .load(MODEL_BYTES.to_vec(), &device)
             .expect("Failed to load embedded model");
@@ -72,8 +67,6 @@ impl CaptchaSolver {
         Ok(pixel_data)
     }
 
-    /// 核心推理函数：Tensor 转换 -> Forward -> Argmax
-    /// 此函数非常快 (~2ms)，需要持有锁。
     fn inference(&self, pixel_data: Vec<f32>) -> Result<String, String> {
         let input_tensor = Tensor::<Backend, 1>::from_floats(pixel_data.as_slice(), &self.device)
             .reshape([1, 1, IMG_HEIGHT, IMG_WIDTH]);
@@ -90,14 +83,9 @@ impl CaptchaSolver {
         Ok(indices.iter().map(|i| i.to_string()).collect())
     }
 }
-
-/// 解决验证码的便捷函数。
-/// 优化：在获取锁之前进行图像预处理，最大化并发性能。
 pub fn solve_captcha(image_bytes: &[u8]) -> Result<String, String> {
-    // 1. 无锁预处理 (耗时大头)
     let pixels = CaptchaSolver::preprocess(image_bytes)?;
 
-    // 2. 获取锁并快速推理
     SOLVER.lock()
         .map_err(|e| format!("Failed to acquire solver lock: {}", e))?
         .inference(pixels)
