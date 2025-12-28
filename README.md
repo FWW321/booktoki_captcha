@@ -1,6 +1,6 @@
 # Booktoki Captcha Solver
 
-基于 Rust 和 [Burn](https://github.com/burn-rs/burn) 的验证码识别库。它专门针对 4 位数字验证码（booktoki 网站）进行了训练和优化
+基于[Burn](https://github.com/burn-rs/burn) 的验证码识别库。针对booktoki进行了训练和优化，供[Spider](https://github.com/FWW321/spider)使用
 
 ## 安装
 
