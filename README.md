@@ -1,6 +1,6 @@
 # Booktoki Captcha Solver
 
-`booktoki_captcha` 是一个基于 Rust 和 [Burn](https://github.com/burn-rs/burn) 深度学习框架的高性能验证码识别库。它专门针对 4 位数字验证码（如 booktoki 网站）进行了训练和优化。
+基于 Rust 和 [Burn](https://github.com/burn-rs/burn) 的验证码识别库。它专门针对 4 位数字验证码（booktoki 网站）进行了训练和优化
 
 ## 安装
 
